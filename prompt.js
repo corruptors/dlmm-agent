@@ -120,9 +120,19 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
-- bins_below = round(config.strategy.minBinsBelow + (candidate volatility/5)*(config.strategy.maxBinsBelow-config.strategy.minBinsBelow)) clamped to [minBinsBelow,maxBinsBelow]. Volatility must be a positive number; 0/unknown means skip.
+- bins_below formula (empirical, from /root/meridian/backtest/momentum-tier-results.json):
+  1. base = round(config.strategy.minBinsBelow + (volatility/5)*(config.strategy.maxBinsBelow-config.strategy.minBinsBelow))
+  2. binStep_modifier by bin_step:
+     - bin_step < 60 → +5 (narrow bins, need wider range)
+     - bin_step 60-99 → +1 (moderate bins)
+     - bin_step 100-124 → -3 (wider bins, need fewer)
+     - bin_step ≥ 125 → -6 (very wide bins, need fewest)
+  3. tier_modifier by momentum_tier (price_change %): extreme(+100%)→+2, high(50-100%)→+2, moderate(20-50%)→0, low(10-20%)→-2, minimal(<10%)→-5
+  4. if volume_suspicious=true (price_change_pct ≥50 AND volume/TVL <0.5): add +5 to tier_modifier (likely fake pump, widen)
+  5. bins_below = clamp(base + binStep_modifier + tier_modifier, config.strategy.minBinsBelow, config.strategy.maxBinsBelow)
+- Volatility must be a positive number; 0/unknown means skip.
 - Use amount_y only, keep amount_x=0 and bins_above=0.
-- Bin steps must be [80-125].
+- Bin steps must be in [config.screening.minBinStep-config.screening.maxBinStep] (current setting: [80-125]).
 - Pick ONE pool only when conviction is real. If only one weak candidate survives, skip and explain why none qualify.
 
 ${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}

@@ -643,7 +643,7 @@ export async function deployPosition({
           idempotencyKey: `deploy:${pool_address}:${minBinId}:${maxBinId}:${finalAmountY}:${finalAmountX}`,
           poolId: pool_address,
           owner: wallet.publicKey.toString(),
-          strategy: activeStrategy === "spot" ? "Spot" : "BidAsk",
+          strategy: activeStrategy === "spot" ? "Spot" : activeStrategy === "curve" ? "Curve" : "BidAsk",
           inputSOL: finalAmountY,
           amountY: finalAmountY,
           amountX: finalAmountX,
@@ -800,20 +800,36 @@ export async function deployPosition({
         log("deploy", `Create tx ${i + 1}/${createTxArray.length}: ${txHash}`);
       }
 
-      // Phase 2: Add liquidity (may be multiple txs)
-      const addTxs = await pool.addLiquidityByStrategyChunkable({
-        positionPubKey: newPosition.publicKey,
-        user: wallet.publicKey,
-        totalXAmount: totalXLamports,
-        totalYAmount: totalYLamports,
-        strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
-      });
-      const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
-      for (let i = 0; i < addTxArray.length; i++) {
-        const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
-        txHashes.push(txHash);
-        log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+      // Phase 2: Add liquidity (with cleanup on failure to recover rent)
+      try {
+        const addTxs = await pool.addLiquidityByStrategyChunkable({
+          positionPubKey: newPosition.publicKey,
+          user: wallet.publicKey,
+          totalXAmount: totalXLamports,
+          totalYAmount: totalYLamports,
+          strategy: { minBinId, maxBinId, strategyType },
+          slippage: 10, // 10%
+        });
+        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
+        for (let i = 0; i < addTxArray.length; i++) {
+          const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
+          txHashes.push(txHash);
+          log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+        }
+      } catch (addLiqErr) {
+        // Cleanup: close the empty position to recover rent
+        log("deploy_error", `Add liquidity failed: ${addLiqErr.message}. Closing empty position ${newPosition.publicKey.toString()} to recover rent...`);
+        try {
+          const closeTx = await pool.closePositionIfEmpty({
+            owner: wallet.publicKey,
+            position: newPosition.publicKey,
+          });
+          const closeHash = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
+          log("deploy", `Empty position closed. Rent recovered. Tx: ${closeHash}`);
+        } catch (closeErr) {
+          log("deploy_error", `Failed to close empty position: ${closeErr.message}. Manual cleanup needed: ${newPosition.publicKey.toString()}`);
+        }
+        throw addLiqErr;
       }
     } else {
       // ── Standard Path (≤69 bins) ─────────────────────────────────

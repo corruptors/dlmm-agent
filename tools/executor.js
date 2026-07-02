@@ -41,6 +41,7 @@ const TIMEFRAME_MINUTES = {
 };
 import { log, logAction } from "../logger.js";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
+import { notifyDeploy as dcDeploy, notifyClose as dcClose } from "../discord-notify.js";
 
 function numberOrNull(value) {
   const n = Number(value);
@@ -161,6 +162,18 @@ async function validateDeployPoolThresholds(args) {
     return {
       pass: false,
       reason: `Pool bin_step ${actualBinStep} is above configured maxBinStep ${maxStep}.`,
+    };
+  }
+
+  // Hard gate: deploy tool only supports single-side SOL deploys (amount_y=quote).
+  // Pool must have SOL/wSOL as the Y/quote token. Without this, tx simulation
+  // fails with "insufficient funds" because the wallet has SOL, not USDC/USDT/etc.
+  const quoteMint = detail?.token_y?.address || null;
+  const solMint = config.tokens.SOL;
+  if (quoteMint !== solMint) {
+    return {
+      pass: false,
+      reason: `Pool quote token (${quoteMint?.slice(0, 8) || "unknown"}) is not SOL/wSOL. Deploy tool only supports SOL-quote pools.`,
     };
   }
 
@@ -628,8 +641,10 @@ export async function executeTool(name, args) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        dcDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
+        dcClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;
@@ -805,7 +820,7 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      const minDeploy = Math.max(0.1, config.management.deployAmountSol);
+      const minDeploy = Math.max(0.05, config.management.deployAmountSol);
       if (amountY < minDeploy) {
         return {
           pass: false,

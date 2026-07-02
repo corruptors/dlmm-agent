@@ -102,3 +102,48 @@ export function listBlacklist() {
     blacklist: entries,
   };
 }
+
+// ─── Auto-blacklist with Expiry ──────────────────────────────────
+
+/**
+ * Add to blacklist with automatic expiry (e.g., 30 days).
+ * Used by auto-blacklist-on-3-losses logic.
+ */
+export function addToBlacklistWithExpiry({ mint, symbol, reason, days = 30 }) {
+  if (!mint) return { error: "mint required" };
+  const db = load();
+  if (db[mint]) return { already_blacklisted: true, mint };
+
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + days);
+
+  db[mint] = {
+    symbol: symbol || "UNKNOWN",
+    reason: reason || "no reason provided",
+    added_at: new Date().toISOString(),
+    added_by: "auto-loss-blacklist",
+    expires_at: expiresAt.toISOString(),
+  };
+  save(db);
+  log("blacklist", `Auto-blacklisted ${symbol || mint} for ${days} days: ${reason}`);
+  return { blacklisted: true, mint, symbol, reason, expires_at: expiresAt.toISOString() };
+}
+
+/**
+ * Check blacklist with expiry support.
+ * Returns false if entry has expired (auto-cleanup).
+ */
+export function isBlacklistedWithExpiry(mint) {
+  if (!mint) return false;
+  const db = load();
+  const entry = db[mint];
+  if (!entry) return false;
+  if (entry.expires_at && new Date(entry.expires_at) < new Date()) {
+    // Auto-cleanup expired entries
+    delete db[mint];
+    save(db);
+    log("blacklist", `Expired blacklist entry removed: ${mint}`);
+    return false;
+  }
+  return true;
+}

@@ -236,7 +236,19 @@ export const config = {
 };
 
 /**
- * Compute the optimal deploy amount for a given wallet balance.
+ * Get the minimum fee_active_tvl_ratio threshold for a given binStep.
+ * Higher binStep = higher base fee = more fee potential, so we relax the threshold.
+ */
+export function getMinFeeActiveTvlRatioForBinStep(binStep) {
+  const step = Number(binStep) || 80;
+  if (step >= 125) return 0.03;   // 5%+ base fee → relaxed
+  if (step >= 100) return 0.05;   // 2% base fee → moderate
+  if (step >= 80)  return 0.08;   // 1% base fee → stricter
+  return 0.10;                     // sub-80 → tightest (but shouldn't reach here with minBinStep=80)
+}
+
+/**
+//insert after the config object and before computeDeployAmount
  * Scales position size with wallet growth (compounding).
  *
  * Formula: clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)

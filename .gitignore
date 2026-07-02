@@ -42,8 +42,12 @@ docs/
 # Discord listener queue
 discord-signals.json
 
-# Playwright MCP browser logs
-.playwright-mcp/
+# Claude Code runtime + agent configs (personal dev tooling, not for public repo)
+.claude/
 
-# Claude Code runtime lock
-.claude/scheduled_tasks.lock
+# Backup files
+*.bak
+*.bak.*
+
+# Daily backup snapshots (user-specific runtime history)
+backups/

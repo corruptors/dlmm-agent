@@ -1,0 +1,163 @@
+{
+  "timestamp": "2026-06-21T13:10:34.325Z",
+  "sampleSize": 161,
+  "poolCounts": {
+    "moderate": 31,
+    "high": 13,
+    "low": 47,
+    "minimal": 66,
+    "extreme": 4
+  },
+  "summaries": [
+    {
+      "tier": "extreme",
+      "count": 4,
+      "priceChangePct": {
+        "min": "116.47",
+        "p25": "116.47",
+        "median": "118.72",
+        "p75": "131.53",
+        "max": "215.36"
+      },
+      "drawdownFromPeakPct": {
+        "min": "12.77",
+        "p25": "12.77",
+        "median": "16.32",
+        "p75": "19.93",
+        "max": "35.32"
+      },
+      "priceRangePct": {
+        "median": "157.05",
+        "p75": "158.71",
+        "p90": "158.71"
+      },
+      "volatility": {
+        "median": "5.75",
+        "p75": "5.79",
+        "max": "8.03"
+      }
+    },
+    {
+      "tier": "high",
+      "count": 13,
+      "priceChangePct": {
+        "min": "53.40",
+        "p25": "66.11",
+        "median": "81.94",
+        "p75": "96.07",
+        "max": "98.69"
+      },
+      "drawdownFromPeakPct": {
+        "min": "0.00",
+        "p25": "8.57",
+        "median": "10.84",
+        "p75": "19.57",
+        "max": "26.71"
+      },
+      "priceRangePct": {
+        "median": "123.89",
+        "p75": "167.80",
+        "p90": "175.10"
+      },
+      "volatility": {
+        "median": "3.79",
+        "p75": "4.04",
+        "max": "5.32"
+      }
+    },
+    {
+      "tier": "moderate",
+      "count": 31,
+      "priceChangePct": {
+        "min": "20.81",
+        "p25": "23.24",
+        "median": "25.79",
+        "p75": "33.55",
+        "max": "44.51"
+      },
+      "drawdownFromPeakPct": {
+        "min": "0.99",
+        "p25": "3.90",
+        "median": "13.03",
+        "p75": "18.05",
+        "max": "54.62"
+      },
+      "priceRangePct": {
+        "median": "62.59",
+        "p75": "77.48",
+        "p90": "100.02"
+      },
+      "volatility": {
+        "median": "3.53",
+        "p75": "4.63",
+        "max": "6.82"
+      }
+    },
+    {
+      "tier": "low",
+      "count": 47,
+      "priceChangePct": {
+        "min": "10.46",
+        "p25": "13.81",
+        "median": "15.97",
+        "p75": "16.17",
+        "max": "19.61"
+      },
+      "drawdownFromPeakPct": {
+        "min": "0.00",
+        "p25": "2.44",
+        "median": "6.28",
+        "p75": "16.40",
+        "max": "42.15"
+      },
+      "priceRangePct": {
+        "median": "31.56",
+        "p75": "41.99",
+        "p90": "59.81"
+      },
+      "volatility": {
+        "median": "1.86",
+        "p75": "3.03",
+        "max": "6.87"
+      }
+    },
+    {
+      "tier": "minimal",
+      "count": 66,
+      "priceChangePct": {
+        "min": "-18.09",
+        "p25": "-0.40",
+        "median": "3.80",
+        "p75": "7.21",
+        "max": "9.41"
+      },
+      "drawdownFromPeakPct": {
+        "min": "0.00",
+        "p25": "2.46",
+        "median": "5.11",
+        "p75": "12.67",
+        "max": "58.34"
+      },
+      "priceRangePct": {
+        "median": "16.17",
+        "p75": "40.38",
+        "p90": "86.18"
+      },
+      "volatility": {
+        "median": "1.61",
+        "p75": "3.12",
+        "max": "11.67"
+      }
+    }
+  ],
+  "recommendedModifiers": {
+    "extreme": -7,
+    "high": 4,
+    "moderate": 0,
+    "low": 13,
+    "minimal": 16
+  },
+  "baselineDrawdownMedian": 13.03,
+  "hypothesisSupported": false,
+  "volumeFilter": 0.5
+}

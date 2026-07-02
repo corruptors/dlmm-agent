@@ -11,6 +11,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { repoPath } from "./repo-root.js";
+import { addToBlacklistWithExpiry } from "./token-blacklist.js";
 
 const STATE_FILE = repoPath("state.json");
 
@@ -196,6 +197,49 @@ export function recordClose(position_address, reason) {
   pushEvent(state, { action: "close", position: position_address, pool_name: pos.pool_name || pos.pool, reason });
   save(state);
   log("state", `Position ${position_address} marked closed: ${reason}`);
+
+  // ─── Auto-blacklist check: 3+ losses on same pool → 30-day ban ───
+  try {
+    checkAndAutoBlacklist(pos);
+  } catch (e) {
+    log("state_warn", `Auto-blacklist check failed: ${e.message}`);
+  }
+}
+
+/**
+ * If the pool has 3+ losses (closes with pnl_pct <= 0), auto-blacklist
+ * the base_mint for 30 days. Idempotent (skips if already blacklisted).
+ */
+function checkAndAutoBlacklist(pos) {
+  const poolAddr = pos.pool;
+  if (!poolAddr) return;
+  const mem = readPoolMemory();
+  const memEntry = mem[poolAddr];
+  if (!memEntry || !Array.isArray(memEntry.deploys)) return;
+  const lossCount = memEntry.deploys.filter(d => (d.pnl_pct ?? 0) <= 0).length;
+  if (lossCount < 3) return;
+  const baseMint = memEntry.base_mint || pos.signal_snapshot?.base_mint;
+  if (!baseMint) return;
+  // Lazy import via top-level import to avoid circular deps
+  const result = addToBlacklistWithExpiry({
+    mint: baseMint,
+    symbol: pos.pool_name || "UNKNOWN",
+    reason: `Auto: ${lossCount} losses on pool ${pos.pool_name || poolAddr}`,
+    days: 30,
+  });
+  if (result?.blacklisted) {
+    log("blacklist", `🚫 AUTO-BLACKLISTED ${pos.pool_name} (${baseMint}) — ${lossCount} losses`);
+  }
+}
+
+function readPoolMemory() {
+  const path = repoPath("pool-memory.json");
+  if (!fs.existsSync(path)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    return {};
+  }
 }
 
 /**

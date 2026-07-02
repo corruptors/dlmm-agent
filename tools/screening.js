@@ -1,9 +1,10 @@
-import { config } from "../config.js";
-import { isBlacklisted } from "../token-blacklist.js";
+import { config, getMinFeeActiveTvlRatioForBinStep } from "../config.js";
+import { isBlacklistedWithExpiry } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
+import { calculateFeeEfficiency, calculatePvpRisk } from "./intelligence.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
@@ -34,8 +35,28 @@ function scoreCandidate(pool) {
   const organic = Number(pool.organic_score || 0);
   const volume = Number(pool.volume_window || 0);
   const holders = Number(pool.holders || 0);
-  return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
+  const binStep = Number(pool.bin_step || 80);
+  // Fee tier bonus: higher binStep = higher base fee = higher fee potential
+  const feeTierBonus = Math.max(0, (binStep - 80) * 0.005);
+  return feeTvl * 1000 * (1 + feeTierBonus) + organic * 10 + volume / 100 + holders / 100;
 }
+
+// T1+T9: Enhanced scoring with fee efficiency + PVP risk
+function scoreCandidateEnhanced(pool) {
+  const base = scoreCandidate(pool);
+  const eff = calculateFeeEfficiency(pool);
+  const pvp = calculatePvpRisk(pool);
+  pool.fee_efficiency = eff;
+  pool.pvp_risk = pvp;
+  let total = base;
+  if (eff.grade === "S") total += base * 0.5;
+  else if (eff.grade === "A") total += base * 0.25;
+  else if (eff.grade === "D") total -= base * 0.2;
+  if (pvp.level === "extreme") total -= base * 0.5;
+  else if (pvp.level === "high") total -= base * 0.25;
+  return total;
+}
+
 
 function numeric(value) {
   if (value == null) return null;
@@ -110,8 +131,8 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (s.maxTvl != null && tvl > s.maxTvl) return `TVL ${tvl} above maxTvl ${s.maxTvl}`;
   if (binStep == null || binStep < s.minBinStep) return `bin_step ${binStep ?? "unknown"} below minBinStep ${s.minBinStep}`;
   if (binStep > s.maxBinStep) return `bin_step ${binStep} above maxBinStep ${s.maxBinStep}`;
-  if (feeActiveTvlRatio == null || feeActiveTvlRatio < s.minFeeActiveTvlRatio) {
-    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below minFeeActiveTvlRatio ${s.minFeeActiveTvlRatio}`;
+  if (feeActiveTvlRatio == null || feeActiveTvlRatio < getMinFeeActiveTvlRatioForBinStep(binStep)) {
+    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below tiered minFeeActiveTvlRatio ${getMinFeeActiveTvlRatioForBinStep(binStep)} for binStep ${binStep}`;
   }
   if (!isUsableVolatility(volatility)) {
     return `volatility ${volatility ?? "unknown"} is unusable`;
@@ -300,7 +321,7 @@ async function findRivalPool(mint) {
 
 async function enrichPvpRisk(pools) {
   const shortlist = [...pools]
-    .sort((a, b) => scoreCandidate(b) - scoreCandidate(a))
+    .sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a))
     .slice(0, PVP_SHORTLIST_LIMIT);
 
   if (shortlist.length === 0) return;
@@ -396,7 +417,7 @@ export async function discoverPools({
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
+    `fee_active_tvl_ratio>=0.03`,  // lenient API filter (tiered check in getRawPoolScreeningRejectReason)
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
@@ -480,14 +501,21 @@ export async function discoverPools({
 
   const condensed = thresholdedRawPools.map(condensePool);
 
-  // Hard-filter blacklisted tokens and blocked deployers (what pool discovery already gave us)
+  // Hard-filter blacklisted tokens, blocked deployers, and non-SOL-quote pools.
+  // The deploy tool only supports single-side SOL deploys (amount_y/amount_sol),
+  // so pools where the quote token isn't SOL/wSOL are undeployable as-is.
+  const SOL_MINT = config.tokens.SOL;
   let pools = condensed.filter((p) => {
-    if (isBlacklisted(p.base?.mint)) {
+    if (isBlacklistedWithExpiry(p.base?.mint)) {
       log("blacklist", `Filtered blacklisted token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) in pool ${p.name}`);
       return false;
     }
     if (p.dev && isDevBlocked(p.dev)) {
       log("dev_blocklist", `Filtered blocked deployer ${p.dev?.slice(0, 8)} token ${p.base?.symbol} in pool ${p.name}`);
+      return false;
+    }
+    if (p.quote?.mint !== SOL_MINT) {
+      log("screening", `Filtered non-SOL-quote pool ${p.name} (quote=${p.quote?.symbol || p.quote?.mint?.slice(0, 8)}) — deploy tool only supports SOL/wSOL as Y token`);
       return false;
     }
     return true;
@@ -553,7 +581,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
-  const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);
+  const minFeeActiveTvlRatio = 0.03; // lenient — tiered check already applied in getRawPoolScreeningRejectReason
 
   const eligible = pools
     .filter((p) => {
@@ -595,7 +623,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       return true;
     })
-    .sort((a, b) => scoreCandidate(b) - scoreCandidate(a))
+    .sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a))
     .slice(0, limit);
 
   if (config.screening.avoidPvpSymbols && eligible.length > 0) {
@@ -752,12 +780,56 @@ function condensePool(p) {
     min_price: p.min_price,
     max_price: p.max_price,
 
+    // Momentum tier (empirical from backtest: high momentum → wider bins)
+    momentum_tier: classifyMomentumTier(p.pool_price_change_pct),
+
     // Activity trends
     volume_change_pct: fix(p.volume_change_pct, 1),
     fee_change_pct: fix(p.fee_change_pct, 1),
     swap_count: p.swap_count,
     unique_traders: p.unique_traders,
+
+    // Volume confirmation (anti-fake-pump heuristic from backtest)
+    volume_tvl_ratio: computeVolumeTvlRatio(p.volume, p.tvl),
+    volume_suspicious: isVolumeSuspicious(p.pool_price_change_pct, p.volume, p.tvl),
   };
+}
+
+/**
+ * Classify momentum tier from price_change_pct.
+ * Backtest-derived cutoffs (see /root/meridian/backtest/momentum-tier-results.json).
+ */
+function classifyMomentumTier(pct) {
+  const n = Number(pct);
+  if (!Number.isFinite(n)) return null;
+  if (n >= 100) return "extreme";
+  if (n >= 50)  return "high";
+  if (n >= 20)  return "moderate";
+  if (n >= 10)  return "low";
+  return "minimal";
+}
+
+/**
+ * Volume / TVL ratio. Heuristic from backtest: 16/17 high-momentum pools had ratio ≥ 0.5.
+ */
+function computeVolumeTvlRatio(volume, tvl) {
+  const v = Number(volume);
+  const t = Number(tvl);
+  if (!Number.isFinite(v) || !Number.isFinite(t) || t <= 0) return null;
+  return fix(v / t, 3);
+}
+
+/**
+ * High momentum + low volume = suspicious (potential fake pump or wash trading).
+ * Backtest: 16/17 (94%) of high-momentum pools had volume/TVL ≥ 0.5 — those passing
+ * this filter have strong organic activity confirmation.
+ */
+function isVolumeSuspicious(priceChangePct, volume, tvl) {
+  const pct = Number(priceChangePct);
+  if (!Number.isFinite(pct) || pct < 50) return false;
+  const ratio = computeVolumeTvlRatio(volume, tvl);
+  if (ratio == null) return true;  // unknown = assume suspicious
+  return ratio < 0.5;
 }
 
 function round(n) {

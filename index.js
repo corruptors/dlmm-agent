@@ -25,6 +25,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
+import { notifyPnlAlert, notifyOutOfRange as dcOutOfRange } from "./discord-notify.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
@@ -189,7 +190,7 @@ async function maybeRunMissedBriefing() {
 
   // Only fire if it's past the scheduled time (1:00 AM UTC)
   const nowUtc = new Date();
-  const briefingHourUtc = 1;
+  const briefingHourUtc = 0;
   if (nowUtc.getUTCHours() < briefingHourUtc) return; // too early, cron will handle it
 
   log("cron", `Missed briefing detected (last sent: ${lastSent || "never"}) — sending now`);
@@ -375,6 +376,7 @@ After executing, write a brief one-line result per position.
       for (const p of positions) {
         if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
           notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
+          dcOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
         }
       }
     }
@@ -731,8 +733,8 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   });
 
-  // Morning Briefing at 8:00 AM UTC+7 (1:00 AM UTC)
-  const briefingTask = cron.schedule(`0 1 * * *`, async () => {
+  // Morning Briefing at 7:00 AM UTC+7 (0:00 AM UTC)
+  const briefingTask = cron.schedule(`0 0 * * *`, async () => {
     await runBriefing();
   }, { timezone: 'UTC' });
 
@@ -745,6 +747,14 @@ Summarize the current portfolio health, total fees earned, and performance of al
   // Runs on public infra (RPC + Jupiter + Meteora deposits) so it can poll aggressively.
   const pnlPollMs = Math.max(1, Number(config.pnl.pollIntervalSec ?? 3)) * 1000;
   let _pnlPollBusy = false;
+  // ─── Real-time PnL alerts ──────────────────────────────────────
+  // Track previous PnL per position to detect threshold crossings.
+  // Sends instant Telegram alert on -10% loss or +20% profit.
+  const _pnlAlertState = new Map();
+  const ALERT_LOSS_PCT = -10;
+  const ALERT_PROFIT_PCT = 20;
+  const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 min between repeat alerts per position
+  const _alertCooldown = new Map(); // positionAddress → lastAlertTimestamp
   const pnlPollInterval = setInterval(async () => {
     if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
     if (getTrackedPositions(true).length === 0) return;
@@ -753,6 +763,32 @@ Summarize the current portfolio health, total fees earned, and performance of al
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
+        // ─── Real-time alert check (before exit logic) ───
+        if (!p.pnl_pct_suspicious && typeof p.pnl_pct === "number") {
+          const prevPnl = _pnlAlertState.get(p.position);
+          const curPnl = p.pnl_pct;
+          _pnlAlertState.set(p.position, curPnl);
+          const crossed = prevPnl !== undefined && (
+            (prevPnl > ALERT_LOSS_PCT && curPnl <= ALERT_LOSS_PCT) ||
+            (prevPnl < ALERT_PROFIT_PCT && curPnl >= ALERT_PROFIT_PCT)
+          );
+          if (crossed) {
+            const lastAlert = _alertCooldown.get(p.position) ?? 0;
+            if (Date.now() - lastAlert >= ALERT_COOLDOWN_MS) {
+              _alertCooldown.set(p.position, Date.now());
+              const emoji = curPnl >= ALERT_PROFIT_PCT ? "🚀" : "⚠️";
+              const label = curPnl >= ALERT_PROFIT_PCT ? "PROFIT ALERT" : "LOSS ALERT";
+              const msg = `${emoji} <b>${label}</b>\n` +
+                `${p.pair} crossed ${curPnl >= ALERT_PROFIT_PCT ? "+" : ""}${curPnl.toFixed(2)}% PnL\n` +
+                `Previous: ${prevPnl.toFixed(2)}% → Now: ${curPnl.toFixed(2)}%\n` +
+                `Value: $${(p.total_value_usd ?? 0).toFixed(2)} | Fees unclaimed: $${(p.unclaimed_fees_usd ?? 0).toFixed(4)}`;
+              sendMessage(msg).catch((e) => log("alert_error", `Send alert failed: ${e.message}`));
+              notifyPnlAlert({ pair: p.pair, prevPnl, curPnl, totalValueUsd: p.total_value_usd, unclaimedFeesUsd: p.unclaimed_fees_usd, type: curPnl >= ALERT_PROFIT_PCT ? "profit" : "loss" }).catch(() => {});
+              log("alert", `[PnL poll] ${label}: ${p.pair} ${prevPnl.toFixed(2)}% → ${curPnl.toFixed(2)}%`);
+            }
+          }
+        }
+
         if (
           !p.pnl_pct_suspicious &&
           queuePeakConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) &&
