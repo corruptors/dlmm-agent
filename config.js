@@ -66,7 +66,7 @@ function nonEmptyString(...values) {
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    u.maxPositions    ?? 3,
+    maxPositions:    3,  // hardcoded cap — user-config.json is gitignored (contains API keys), so non-secret defaults stay in code
     maxDeployAmount: u.maxDeployAmount ?? 50,
   },
 
