@@ -693,6 +693,32 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
+  // ─── SuperTrend Uptrend Enrichment ───────────────────────────────────
+  // Annotate each eligible candidate with SuperTrend uptrend status.
+  // Used by bonus_stage strategy to confirm bullish momentum before deploy.
+  if (eligible.length > 0) {
+    const { getSupertrendValues } = await import("./chart-indicators.js");
+    const stResults = await Promise.allSettled(
+      eligible.map(async (pool) => {
+        const mint = pool.base?.mint;
+        if (!mint) return { pool: pool.pool, st: null };
+        const st = await getSupertrendValues({ mint });
+        return { pool: pool.pool, st };
+      }),
+    );
+    for (const result of stResults) {
+      if (result.status !== "fulfilled" || !result.value.st) continue;
+      const { pool: poolAddr, st } = result.value;
+      const pool = eligible.find((p) => p.pool === poolAddr);
+      if (pool && st) {
+        pool.supertrend_value = st.value;
+        pool.supertrend_direction = st.direction;
+        pool.supertrend_uptrend = st.isUptrend;
+        pool.supertrend_break_up = st.breakUp;
+      }
+    }
+  }
+
   return {
     candidates: eligible,
     total_screened: pools.length,

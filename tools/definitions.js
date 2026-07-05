@@ -185,6 +185,10 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
             type: "number",
             description: "Optional human-friendly upside range in percent above the current active price. Do not use this for single-side SOL deploys."
           },
+          supertrend_range: {
+            type: "boolean",
+            description: "Set to true for the bonus_stage strategy. Automatically calculates bins_below from the SuperTrend band price to the active bin. Only applies when SuperTrend is in uptrend; falls back to default range otherwise."
+          },
           pool_name: { type: "string", description: "Human-readable pool name for record-keeping" },
           base_mint: { type: "string", description: "Base token mint address — used to prevent duplicate token exposure across pools" },
           bin_step: { type: "number", description: "Pool bin step (from discover_pools)" },

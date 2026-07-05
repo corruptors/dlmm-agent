@@ -138,6 +138,14 @@ export const config = {
     defaultBinsBelow: strategyDefaultBinsBelow,
   },
 
+  // ─── Bonus Stage Strategy ───────────────
+  bonusStage: {
+    enabled:             u.bonusStageEnabled             ?? false,
+    requireUptrend:      u.bonusStageRequireUptrend      ?? true,
+    supertrendInterval:  u.bonusStageSupertrendInterval  ?? "15_MINUTE",
+    fallbackToDefault:   u.bonusStageFallbackToDefault   ?? true,
+  },
+
   // ─── Scheduling ─────────────────────────
   schedule: {
     managementIntervalMin:  u.managementIntervalMin  ?? 10,

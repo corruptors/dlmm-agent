@@ -224,6 +224,48 @@ async function fetchChartIndicatorsForMint(
   });
 }
 
+/**
+ * Fetch SuperTrend band prices for a given mint.
+ * Returns the SuperTrend value (band price), direction, and whether it
+ * currently signals an uptrend — useful for the bonus_stage strategy
+ * which uses the band as the lower bound of the deploy range.
+ */
+export async function getSupertrendValues({
+  mint,
+  interval,
+  candles = config.indicators.candles ?? DEFAULT_CANDLES,
+  rsiLength = config.indicators.rsiLength ?? 2,
+  refresh = false,
+} = {}) {
+  if (!mint) return null;
+  const normalizedInterval = String(interval || "15_MINUTE").trim().toUpperCase();
+  const search = new URLSearchParams({
+    interval: normalizedInterval,
+    candles: String(candles),
+    rsiLength: String(rsiLength),
+  });
+  if (refresh) search.set("refresh", "1");
+
+  try {
+    const payload = await agentMeridianJson(
+      `/chart-indicators/${mint}?${search.toString()}`,
+      { headers: getAgentMeridianHeaders() },
+    );
+    const supertrend = payload?.latest?.supertrend || {};
+    const states = payload?.latest?.states || {};
+    return {
+      value: safeNum(supertrend.value),
+      direction: String(supertrend.direction || "unknown"),
+      breakUp: !!states.supertrendBreakUp,
+      breakDown: !!states.supertrendBreakDown,
+      isUptrend: String(supertrend.direction).toLowerCase() === "bullish",
+    };
+  } catch (error) {
+    log("indicators_warn", `SuperTrend fetch failed for ${mint.slice(0, 8)}: ${error.message}`);
+    return null;
+  }
+}
+
 export async function confirmIndicatorPreset({
   mint,
   side,

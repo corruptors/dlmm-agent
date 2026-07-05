@@ -30,6 +30,7 @@ import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 import { computePositions, fetchDlmmPnlForPool } from "./pnl.js";
+import { getSupertrendValues } from "./chart-indicators.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -459,6 +460,7 @@ export async function deployPosition({
   bins_above,
   downside_pct,
   upside_pct,
+  supertrend_range: supertrendRange, // bonus_stage: use SuperTrend band as lower bound
   // optional pool metadata for learning (passed by agent when available)
   pool_name,
   bin_step,
@@ -518,6 +520,38 @@ export async function deployPosition({
 
     activeBinsBelow = Math.max(0, activeBin.binId - lowerBinId);
     activeBinsAbove = Math.max(0, upperBinId - activeBin.binId);
+  }
+
+  // ─── SuperTrend-based bin range (bonus_stage) ────────────────────────
+  // When supertrendRange is requested, fetch the SuperTrend band for the
+  // pool's base mint and use it as the lower bound of the position range.
+  // This creates a position from the SuperTrend support band up to the
+  // current active bin, providing a trend-following entry with dynamic
+  // support as the lower edge.
+  if (supertrendRange && baseMint) {
+    try {
+      const stResult = await getSupertrendValues({ mint: baseMint });
+      if (stResult && stResult.isUptrend && stResult.value != null && stResult.value > 0) {
+        const stBandPrice = stResult.value;
+        // Convert SuperTrend band price to a bin ID
+        const stBandBinId = getBinIdFromPrice(stBandPrice, actualBinStep, true);
+        const stBinsBelow = Math.max(0, activeBin.binId - stBandBinId);
+
+        // Only apply if SuperTrend range gives at least MIN_SAFE_BINS_BELOW
+        if (stBinsBelow >= MIN_SAFE_BINS_BELOW) {
+          // For single-sided SOL: use SuperTrend band as lower bound, active bin as upper
+          activeBinsBelow = stBinsBelow;
+          activeBinsAbove = 0;
+          log("deploy", `SuperTrend range: band price ${stBandPrice} → bin ${stBandBinId}, ${stBinsBelow} bins below active bin ${activeBin.binId} (uptrend confirmed)`);
+        } else {
+          log("deploy", `SuperTrend range too narrow (${stBinsBelow} bins < ${MIN_SAFE_BINS_BELOW} min), using default range`);
+        }
+      } else {
+        log("deploy", `SuperTrend not in uptrend or band value unavailable — falling back to default range`);
+      }
+    } catch (error) {
+      log("deploy", `SuperTrend range lookup failed: ${error.message} — using default range`);
+    }
   }
 
   const strategyMap = {
@@ -1254,6 +1288,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
           position:           positionAddress,
           pool:               pool.poolAddress,
           pair:               tracked?.pool_name || `${pool.tokenX}/${pool.tokenY}`,
+          strategy:           tracked?.strategy ?? null,
           base_mint:          pool.tokenXMint,
           lower_bin:          lowerBin,
           upper_bin:          upperBin,
@@ -1271,6 +1306,16 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
                   ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.amountSol || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.amountSol || 0)
                   : parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)
               ) * 10000) / 10000
+            : null,
+          // Always-SOL unclaimed (mirror of unclaimed_fees_usd but forced to native unit).
+          unclaimed_fees_sol: lpData
+            ? Math.round(safeNum(lpData.unCollectedFeeNative) * 10000) / 10000
+            : binData
+            ? Math.round(
+                (parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.amountSol || 0)
+                  + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.amountSol || 0))
+                * 10000
+              ) / 10000
             : null,
           total_value_usd:    lpData
             ? Math.round((
@@ -1290,6 +1335,12 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
             ? Math.round(safeNum(lpData.value) * 10000) / 10000
             : binData
             ? Math.round(parseFloat(binData.unrealizedPnl?.balances || 0) * 10000) / 10000
+            : null,
+          // Always-SOL total value (mirror of total_value_usd but forced to native unit).
+          total_value_sol: lpData
+            ? Math.round(safeNum(lpData.valueNative) * 10000) / 10000
+            : binData
+            ? Math.round(parseFloat(binData.unrealizedPnl?.balancesSol || 0) * 10000) / 10000
             : null,
           collected_fees_usd: lpData
             ? Math.round((

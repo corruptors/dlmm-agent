@@ -285,16 +285,28 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Build JS report ──────────────────────────────────────────────
-    const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    const totalValueUsd = positionData.reduce((s, p) => s + (p.total_value_true_usd ?? 0), 0);
+    const totalValueSol = positionData.reduce((s, p) => s + (p.total_value_sol ?? 0), 0);
+    const totalUnclaimedUsd = positionData.reduce((s, p) => s + (p.unclaimed_fees_true_usd ?? 0), 0);
+    const totalUnclaimedSol = positionData.reduce((s, p) => s + (p.unclaimed_fees_sol ?? 0), 0);
+
+    const fmtUsd = (v) => v != null ? `$${Number(v).toFixed(4)}` : "$?";
+    const fmtSol = (v) => v != null ? `◎${Number(v).toFixed(4)}` : "◎?";
+    const slPct = config.management.stopLossPct;
 
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
+      const strat = p.strategy
+        ? p.strategy.split("_").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("-")
+        : "?";
+      const binsCount = (p.upper_bin != null && p.lower_bin != null)
+        ? (p.upper_bin - p.lower_bin + 1)
+        : "?";
+      const val = `${fmtUsd(p.total_value_true_usd)} / ${fmtSol(p.total_value_sol)}`;
+      const unclaimed = `${fmtUsd(p.unclaimed_fees_true_usd)} / ${fmtSol(p.unclaimed_fees_sol)}`;
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
+      let line = `**${p.pair}** | ${strat} | ${binsCount} bins | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct != null ? Number(p.pnl_pct).toFixed(2) : "?"}% | Yield: ${p.fee_per_tvl_24h != null ? Number(p.fee_per_tvl_24h).toFixed(2) : "?"}% | SL: ${slPct}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
@@ -307,9 +319,8 @@ export async function runManagementCycle({ silent = false } = {}) {
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
       : "no action";
 
-    const cur = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${positions.length} positions | Val: ${fmtUsd(totalValueUsd)} / ${fmtSol(totalValueSol)} | fees: ${fmtUsd(totalUnclaimedUsd)} / ${fmtSol(totalUnclaimedSol)} | ${actionSummary}`;
 
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
