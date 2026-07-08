@@ -271,6 +271,33 @@ WARNING: This executes a real on-chain transaction.`,
   {
     type: "function",
     function: {
+      name: "add_liquidity",
+      description: `Add SOL liquidity to an existing DLMM position to compound fee earnings.
+Use this after claim_fees to reinvest the claimed fees back into the position.
+Only for single-sided SOL positions (bid_ask). The position's bin range and
+strategy type are read from the on-chain position data automatically.
+
+WARNING: This executes a real on-chain transaction.`,
+      parameters: {
+        type: "object",
+        properties: {
+          position_address: {
+            type: "string",
+            description: "The position public key to add liquidity to"
+          },
+          amount_sol: {
+            type: "number",
+            description: "Amount of SOL to add (e.g. 0.05 for 0.05 SOL)"
+          }
+        },
+        required: ["position_address", "amount_sol"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "close_position",
       description: `Remove all liquidity and close a position.
 This withdraws all tokens back to the wallet and closes the position account.

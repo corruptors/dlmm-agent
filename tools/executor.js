@@ -276,6 +276,7 @@ const toolMap = {
   list_smart_wallets: listSmartWallets,
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
+  add_liquidity: addLiquidity,
   close_position: closePosition,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
@@ -585,6 +586,7 @@ const toolMap = {
 const WRITE_TOOLS = new Set([
   "deploy_position",
   "claim_fees",
+  "add_liquidity",
   "close_position",
   "swap_token",
 ]);

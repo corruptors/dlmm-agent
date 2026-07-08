@@ -1554,6 +1554,86 @@ export async function claimFees({ position_address }) {
   }
 }
 
+// ─── Add Liquidity (compound fees back to position) ─────────────
+// Adds SOL fees back into the same position to compound yield.
+// For bid_ask single-sided positions: amount_x=0, amount_y=SOL lamports.
+// Uses the position's existing bin range and strategy type.
+export async function addLiquidity({ position_address, amount_sol }) {
+  position_address = normalizeMint(position_address);
+  const amountLamports = Math.floor(Number(amount_sol) * 1e9);
+  if (!Number.isFinite(amountLamports) || amountLamports <= 0) {
+    return { success: false, error: "Invalid amount_sol — must be a positive number" };
+  }
+  if (process.env.DRY_RUN === "true") {
+    return { dry_run: true, position: position_address, amount_sol, message: "DRY RUN — no transaction sent" };
+  }
+
+  try {
+    log("compound", `Adding ${amount_sol} SOL to position ${position_address}`);
+    const wallet = getWallet();
+    const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
+    const pool = await getPool(poolAddress);
+    const positionData = await pool.getPosition(new PublicKey(position_address));
+
+    // Determine bin range from position
+    const lowerBinId = Number(positionData.binId);
+    const upperBinId = Number(positionData.binGte);
+    const totalRangeBins = upperBinId - lowerBinId + 1;
+
+    // Determine strategy type from on-chain position data
+    // In DLMM SDK, strategyType is stored in the position's strategy flags
+    // We derive it from whether amountX is 0 (bid_ask) or both non-zero (curve/spot)
+    const positionDataObj = positionData;
+    const hasTokenX = Number(positionDataObj.amountX?.toString() || 0) > 0;
+    const hasTokenY = Number(positionDataObj.amountY?.toString() || 0) > 0;
+
+    let strategyType;
+    if (!hasTokenX && hasTokenY) {
+      // Single-sided SOL — bid_ask
+      strategyType = (await getDLMM()).StrategyType.BidAsk;
+    } else if (hasTokenX && hasTokenY) {
+      // Both tokens — check bin distribution to differentiate spot vs curve
+      strategyType = (await getDLMM()).StrategyType.Curve;
+    } else {
+      strategyType = (await getDLMM()).StrategyType.Spot;
+    }
+
+    const strategy = { minBinId: lowerBinId, maxBinId: upperBinId, strategyType };
+    log("compound", `Position range: bins ${lowerBinId}-${upperBinId} (${totalRangeBins} bins), strategy: ${strategyType}, adding ${amountLamports} lamports`);
+
+    const txs = await pool.addLiquidityByStrategy({
+      positionPubKey: new PublicKey(position_address),
+      user: wallet.publicKey,
+      totalXAmount: 0,           // single-sided SOL — no token X
+      totalYAmount: amountLamports,
+      strategy,
+      slippage: 1000,            // 10% slippage in bps
+    });
+
+    const txHashes = [];
+    const txArray = Array.isArray(txs) ? txs : [txs];
+    for (const tx of txArray) {
+      const hash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+      txHashes.push(hash);
+    }
+
+    log("compound", `SUCCESS — added ${amount_sol} SOL to position ${position_address}, txs: ${txHashes.join(", ")}`);
+    _positionsCacheAt = 0; // invalidate cache
+
+    return {
+      success: true,
+      position: position_address,
+      amount_sol,
+      txs: txHashes,
+      range_bins: totalRangeBins,
+      strategy: strategyType,
+    };
+  } catch (error) {
+    log("compound_error", `addLiquidity failed: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
 // ─── Close Position ────────────────────────────────────────────
 export async function closePosition({ position_address, reason }) {
   position_address = normalizeMint(position_address);
