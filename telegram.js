@@ -509,6 +509,18 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   );
 }
 
+export async function notifyRebalance({ pair, oldPosition, newPosition, newRange, amountSol, activeBin }) {
+  if (hasActiveLiveMessage()) return;
+  await sendHTML(
+    `🔄 <b>Position Rebalanced</b> ${pair}\n` +
+    `Amount: ${amountSol} SOL\n` +
+    `Old position: ${oldPosition?.slice(0, 8) || "?"}\n` +
+    `New position: ${newPosition?.slice(0, 8) || "?"}\n` +
+    `New range: bins ${newRange?.min}–${newRange?.max} (${newRange?.bins} bins)\n` +
+    `Active bin at rebalance: ${activeBin}`
+  );
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

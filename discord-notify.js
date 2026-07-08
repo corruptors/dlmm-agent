@@ -104,3 +104,16 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
     COLORS.warning,
   ));
 }
+
+export async function notifyRebalance({ pair, oldPosition, newPosition, newRange, amountSol, activeBin }) {
+  const fields = [
+    { name: "Amount", value: `${amountSol ?? "?"} SOL`, inline: true },
+    { name: "Active Bin", value: `${activeBin ?? "?"}`, inline: true },
+    { name: "Old Position", value: `\`${(oldPosition || "").slice(0, 12)}...\``, inline: true },
+    { name: "New Position", value: `\`${(newPosition || "").slice(0, 12)}...\``, inline: true },
+  ];
+  if (newRange) {
+    fields.push({ name: "New Range", value: `bins ${newRange.min}–${newRange.max} (${newRange.bins} bins)`, inline: false });
+  }
+  await postWebhook(embed(`🔄 Rebalanced ${pair}`, "", COLORS.info, fields));
+}

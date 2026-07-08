@@ -298,14 +298,50 @@ WARNING: This executes a real on-chain transaction.`,
   {
     type: "function",
     function: {
+      name: "rebalance_position",
+      description: `Close an out-of-range position and immediately redeploy with a wider bin range.
+Use when a position has been OOR for > 30 minutes and you want to recapture range
+instead of just closing. Preserves the original SOL amount.
+
+Process:
+1. Close the old position (fees auto-claimed)
+2. Fetch current active bin from the pool
+3. Deploy new position with wider range: active_bin - 60 to active_bin + 30 (91 bins)
+4. Same SOL amount as the original position
+
+WARNING: Executes TWO on-chain transactions (close + deploy).`,
+
+      parameters: {
+        type: "object",
+        properties: {
+          position_address: {
+            type: "string",
+            description: "The position public key to rebalance"
+          },
+          reason: {
+            type: "string",
+            description: "Why rebalancing (e.g. 'OOR', 'rebalance'). Used for pool memory."
+          }
+        },
+        required: ["position_address"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "close_position",
       description: `Remove all liquidity and close a position.
 This withdraws all tokens back to the wallet and closes the position account.
 Use when:
-- Position has been out of range for > 30 minutes
+- Position has been out of range for > 30 minutes AND rebalancing is not viable
 - IL exceeds accumulated fees
 - Token shows danger signals (organic score drop, volume crash)
-- Rebalancing (close old + open new)
+- Emergency stop loss
+
+NOTE: For OOR positions, prefer rebalance_position instead of close_position
+when you want to stay in the pool with a wider range.
 
 WARNING: This executes a real on-chain transaction. Cannot be undone.`,
       parameters: {

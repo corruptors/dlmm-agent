@@ -1634,6 +1634,79 @@ export async function addLiquidity({ position_address, amount_sol }) {
   }
 }
 
+// ─── Rebalance Position ─────────────────────────────────────────
+// Closes an OOR position and immediately redeploys with a wider bin range
+// anchored to the current active bin. Preserves SOL amount.
+export async function rebalancePosition({ position_address, reason }) {
+  position_address = normalizeMint(position_address);
+  const tracked = getTrackedPosition(position_address);
+  const strat = tracked?.strategy || "bid_ask";
+  const origAmountSol = tracked?.amount_sol || 0.5;
+  const origBinsBelow = tracked?.bin_range?.bins_below;
+  const origBinsAbove = tracked?.bin_range?.bins_above;
+
+  log("rebalance", `Rebalancing position ${position_address}: ${origAmountSol} SOL, strategy=${strat}`);
+
+  try {
+    // ── Step 1: Get current pool + active bin ──────────────────────
+    const wallet = getWallet();
+    const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
+    const pool = await getPool(poolAddress);
+    const activeBin = await pool.getActiveBin();
+    const activeBinId = Number(activeBin.binId);
+    const binStep = Number(pool.lbPair.binStep);
+    log("rebalance", `Pool ${poolAddress.slice(0,8)}, active bin: ${activeBinId}, binStep: ${binStep}%`);
+
+    // ── Step 2: Calculate wider bin range ──────────────────────────
+    // Widen by fixed offsets from current active bin (recapture range)
+    // For bid_ask: asymmetric — more bins below (entry) than above
+    const REBALANCE_BINS_ABOVE = 30;  // configurable: bins above active
+    const REBALANCE_BINS_BELOW = 60;  // configurable: bins below active
+    const maxBinId = activeBinId + REBALANCE_BINS_ABOVE;
+    const minBinId = activeBinId - REBALANCE_BINS_BELOW;
+    log("rebalance", `New range: ${minBinId}–${maxBinId} (${maxBinId - minBinId + 1} bins)`);
+
+    // ── Step 3: Close old position (handles fee claiming) ──────────
+    log("rebalance", `Closing old position...`);
+    const closeResult = await closePosition({ position_address, reason: reason || "rebalance OOR" });
+    if (!closeResult.success && !closeResult.dry_run) {
+      return { success: false, error: `close failed: ${closeResult.error}` };
+    }
+    const closeTx = closeResult.tx || closeResult.txs?.[0] || "dry_run";
+    log("rebalance", `Closed. Tx: ${closeTx}`);
+
+    // ── Step 4: Deploy new position with wider range ───────────────
+    log("rebalance", `Deploying new position with wider range...`);
+    const deployResult = await deployPosition({
+      pool_address: poolAddress,
+      amount_sol: origAmountSol,
+      bins_below: REBALANCE_BINS_BELOW,
+      bins_above: REBALANCE_BINS_ABOVE,
+      strategy: strat,
+      signal: "rebalance",
+    });
+
+    _positionsCacheAt = 0; // invalidate cache
+
+    return {
+      success: true,
+      old_position: position_address,
+      close_tx: closeTx,
+      new_position: deployResult.position || deployResult.dry_run?.position,
+      new_range: { min: minBinId, max: maxBinId, bins: maxBinId - minBinId + 1 },
+      amount_sol: origAmountSol,
+      strategy: strat,
+      active_bin_at_rebalance: activeBinId,
+      message: deployResult.dry_run
+        ? `DRY RUN — would rebalance ${origAmountSol} SOL to bins ${minBinId}–${maxBinId}`
+        : `Rebalanced ${origAmountSol} SOL from position ${position_address.slice(0,8)} to new position ${(deployResult.position || "").slice(0,8)}`,
+    };
+  } catch (error) {
+    log("rebalance_error", `Rebalance failed: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
 // ─── Close Position ────────────────────────────────────────────
 export async function closePosition({ position_address, reason }) {
   position_address = normalizeMint(position_address);

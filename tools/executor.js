@@ -40,8 +40,8 @@ const TIMEFRAME_MINUTES = {
   "24h": 1440,
 };
 import { log, logAction } from "../logger.js";
-import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
-import { notifyDeploy as dcDeploy, notifyClose as dcClose } from "../discord-notify.js";
+import { notifyDeploy, notifyClose, notifySwap, notifyRebalance } from "../telegram.js";
+import { notifyDeploy as dcDeploy, notifyClose as dcClose, notifyRebalance as dcRebalance } from "../discord-notify.js";
 
 function numberOrNull(value) {
   const n = Number(value);
@@ -277,6 +277,7 @@ const toolMap = {
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
   add_liquidity: addLiquidity,
+  rebalance_position: rebalancePosition,
   close_position: closePosition,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
@@ -587,6 +588,7 @@ const WRITE_TOOLS = new Set([
   "deploy_position",
   "claim_fees",
   "add_liquidity",
+  "rebalance_position",
   "close_position",
   "swap_token",
 ]);
@@ -658,17 +660,18 @@ export async function executeTool(name, args) {
             const balances = await getWalletBalances({});
             const token = balances.tokens?.find(t => t.mint === result.base_mint);
             if (token && token.usd >= 0.10) {
-              log("executor", `Auto-swapping ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
-              const swapResult = await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
-              // Tell the model the swap already happened so it doesn't call swap_token again
-              result.auto_swapped = true;
-              result.auto_swap_note = `Base token already auto-swapped back to SOL (${token.symbol || result.base_mint.slice(0, 8)} → SOL). Do NOT call swap_token again.`;
-              if (swapResult?.amount_out) result.sol_received = swapResult.amount_out;
+              log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
+              await swapToken({ input_mint: result.base_mint, output_mint: "So11111111111111111111111111111111111111112", amount: token.amount_lamports || Math.round(token.amount * 1e9) }).catch((e) => {
+                log("executor_warn", `Auto-swap after close failed: ${e.message}`);
+              });
             }
           } catch (e) {
             log("executor_warn", `Auto-swap after close failed: ${e.message}`);
           }
         }
+      } else if (name === "rebalance_position") {
+        notifyRebalance({ pair: result.pool_name || args.position_address?.slice(0, 8), oldPosition: result.old_position, newPosition: result.new_position, newRange: result.new_range, amountSol: result.amount_sol, activeBin: result.active_bin_at_rebalance }).catch(() => {});
+        dcRebalance({ pair: result.pool_name || args.position_address?.slice(0, 8), oldPosition: result.old_position, newPosition: result.new_position, newRange: result.new_range, amountSol: result.amount_sol, activeBin: result.active_bin_at_rebalance }).catch(() => {});
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
           const balances = await getWalletBalances({});

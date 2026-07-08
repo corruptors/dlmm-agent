@@ -350,6 +350,7 @@ ${actionBlocks}
 
 RULES:
 - CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
+- REBALANCE: call rebalance_position with position_address — closes OOR position and immediately redeploys with wider bin range (active_bin -60 to +30). Do NOT call close_position or deploy_position separately.
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
@@ -952,7 +953,7 @@ function getDeterministicCloseRule(position, managementConfig) {
     position.active_bin > position.upper_bin &&
     (position.minutes_out_of_range ?? 0) >= managementConfig.outOfRangeWaitMinutes
   ) {
-    return { action: "CLOSE", rule: 4, reason: "OOR" };
+    return { action: "REBALANCE", rule: 4, reason: "OOR — rebalancing with wider range" };
   }
   if (
     position.fee_per_tvl_24h != null &&
