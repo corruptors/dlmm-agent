@@ -84,7 +84,12 @@ function getToolsForRole(agentType, goal = "") {
   return tools.filter(t => matched.has(t.function.name));
 }
 import { getWalletBalances } from "./tools/wallet.js";
-import { getMyPositions } from "./tools/dlmm.js";
+// Lazy-load dlmm — its SDK import can race with PM2/ESM module init
+let _dlmmMod;
+async function getDlmmMod() {
+  if (!_dlmmMod) _dlmmMod = await import("./tools/dlmm.js");
+  return _dlmmMod;
+}
 import { log } from "./logger.js";
 import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
@@ -157,7 +162,8 @@ function isThinkingModeToolChoiceError(error) {
 export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null, maxOutputTokens = null, options = {}) {
   const { interactive = false, onToolStart = null, onToolFinish = null } = options;
   // Build dynamic system prompt with current portfolio state
-  const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
+  const dlmm = await getDlmmMod();
+  const [portfolio, positions] = await Promise.all([getWalletBalances(), dlmm.getMyPositions()]);
   const stateSummary = getStateSummary();
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
