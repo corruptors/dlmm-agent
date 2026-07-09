@@ -774,10 +774,22 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     await enrichHolderConcentration(eligible);
   }
 
+  // ─── Deduplicate by Base Mint ─────────────────────────────────────
+  // Same token can have multiple DLMM pools (different bin_steps).
+  // Keep the one with the highest score.
+  const seenMints = new Set();
+  const deduplicated = [];
+  const scored = [...eligible].sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a));
+  for (const pool of scored) {
+    const mint = pool.base?.mint;
+    if (!mint || !seenMints.has(mint)) {
+      seenMints.add(mint);
+      deduplicated.push(pool);
+    }
+  }
+
   // ─── Sort & Rank ─────────────────────────────────────────────────
-  const ranked = [...eligible]
-    .sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a))
-    .slice(0, limit);
+  const ranked = deduplicated.slice(0, limit);
 
   return {
     candidates: ranked,
