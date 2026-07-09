@@ -663,9 +663,9 @@ export async function executeTool(name, args) {
           try {
             const balances = await getWalletBalances({});
             const token = balances.tokens?.find(t => t.mint === result.base_mint);
-            if (token && token.usd >= 0.10) {
-              log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
-              await swapToken({ input_mint: result.base_mint, output_mint: "So11111111111111111111111111111111111111112", amount: token.amount_lamports || Math.round(token.amount * 1e9) }).catch((e) => {
+            if (token && token.balance && token.usd !== undefined && token.usd >= 0.10) {
+              log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${Number(token.usd).toFixed(2)}, balance: ${token.balance}) back to SOL`);
+              await swapToken({ input_mint: result.base_mint, output_mint: "So11111111111111111111111111111111111111112", amount: token.balance }).catch((e) => {
                 log("executor_warn", `Auto-swap after close failed: ${e.message}`);
               });
             }
@@ -676,13 +676,13 @@ export async function executeTool(name, args) {
       } else if (name === "rebalance_position") {
         notifyRebalance({ pair: result.pool_name || args.position_address?.slice(0, 8), oldPosition: result.old_position, newPosition: result.new_position, newRange: result.new_range, amountSol: result.amount_sol, activeBin: result.active_bin_at_rebalance }).catch(() => {});
         dcRebalance({ pair: result.pool_name || args.position_address?.slice(0, 8), oldPosition: result.old_position, newPosition: result.new_position, newRange: result.new_range, amountSol: result.amount_sol, activeBin: result.active_bin_at_rebalance }).catch(() => {});
-      } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
+            } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
           const balances = await getWalletBalances({});
           const token = balances.tokens?.find(t => t.mint === result.base_mint);
-          if (token && token.usd >= 0.10) {
-            log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
-            await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
+          if (token && token.balance && token.usd !== undefined && token.usd >= 0.10) {
+            log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${Number(token.usd).toFixed(2)}, balance: ${token.balance}) back to SOL`);
+            await swapToken({ input_mint: result.base_mint, output_mint: "So11111111111111111111111111111111111111112", amount: token.balance });
           }
         } catch (e) {
           log("executor_warn", `Auto-swap after claim failed: ${e.message}`);
