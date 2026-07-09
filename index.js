@@ -284,8 +284,7 @@ export async function runManagementCycle({ silent = false } = {}) {
       actionMap.set(p.position, { action: "STAY" });
     }
 
-    // ── Build JS report ──────────────────────────────────────────────
-    // ── Build compact position report ─────────────────────────────────
+    // ── Build position report ─────────────────────────────────────────
     const totalValueUsd = positionData.reduce((s, p) => s + (p.total_value_true_usd ?? 0), 0);
     const totalValueSol = positionData.reduce((s, p) => s + (p.total_value_sol ?? 0), 0);
     const totalUnclaimedUsd = positionData.reduce((s, p) => s + (p.unclaimed_fees_true_usd ?? 0), 0);
@@ -298,47 +297,42 @@ export async function runManagementCycle({ silent = false } = {}) {
     const needsAction = [...actionMap.values()].filter(a => a.action !== "STAY");
     const actionSummary = needsAction.length > 0
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
-      : "no action";
+      : "No Action!";
 
-    // ── Per-position compact blocks ───────────────────────────────────
-    const reportLines = positionData.map((p) => {
+    // ── Per-position blocks ───────────────────────────────────────────
+    const positionBlocks = positionData.map((p, i) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const strat = p.strategy
-        ? p.strategy.split("_").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("-")
-        : "?";
-      const binsCount = (p.upper_bin != null && p.lower_bin != null)
-        ? (p.upper_bin - p.lower_bin + 1)
-        : "?";
-      const pnlEmoji = (p.pnl_pct ?? -9999) >= 1 ? "📈" : (p.pnl_pct ?? -9999) >= 0 ? "➖" : "📉";
-      const pnlStr = p.pnl_pct != null ? `${pnlEmoji}${Number(p.pnl_pct).toFixed(2)}%` : "—";
-      const feeStr = p.unclaimed_fees_true_usd != null ? `💰 ${fmtUsd(p.unclaimed_fees_true_usd)}` : "—";
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD" : act.action;
-      const actionEmoji = act.action === "CLOSE" ? "🔴" : act.action === "CLAIM" ? "🟡" : act.action === "REBALANCE" ? "🔵" : "🟢";
+      const rangeLine = `${inRange} | ${statusLabel}`;
 
-      let line = `${actionEmoji} **${p.pair}** ${feeStr} | ${pnlStr} | ${strat} ${binsCount} bins | ${inRange} | ${statusLabel}`;
-      if (p.instruction) line += `\n  📝 "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += `\n  ⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\n  ${act.rule}: ${act.reason}`;
-      if (act.action === "CLAIM") line += ` — claiming`;
-      return line;
+      const pnlRaw = p.pnl_pct;
+      const pnlStr = pnlRaw != null ? (pnlRaw >= 0 ? `+${Number(pnlRaw).toFixed(2)}%` : `${Number(pnlRaw).toFixed(2)}%`) : "—";
+
+      const feeUsd = p.unclaimed_fees_true_usd != null ? fmtUsd(p.unclaimed_fees_true_usd) : "$0.0000";
+      const feeSol = p.unclaimed_fees_sol != null ? fmtSol(p.unclaimed_fees_sol) : "◎0.0000";
+      const feeTvl = p.fee_per_tvl_24h != null ? `${Number(p.fee_per_tvl_24h).toFixed(3)}%` : "—";
+
+      return [
+        `${i + 1}. ${p.pair}`,
+        `   Fee accrued    : ${feeUsd} (${feeSol})`,
+        `   Fee/TVL 24h    : ${feeTvl}`,
+        `   Range          : ${rangeLine}`,
+        `   PnL peak       : ${pnlStr}`,
+      ].join("\n");
     });
 
-    // ── Combined summary footer ───────────────────────────────────────
-    const COMPOUND_THRESHOLD_USD = 0.50;
-    const compoundReady = totalUnclaimedUsd >= COMPOUND_THRESHOLD_USD;
-    const compoundNote = compoundReady
-      ? `✅ Fee ≥ $${COMPOUND_THRESHOLD_USD} — compound ready`
-      : `⏳ Fee < $${COMPOUND_THRESHOLD_USD} — skip compound`;
+    const header = "══════════════════════════════════════";
+    const divider = "──────────────────────────────────────";
 
     mgmtReport = [
-      `📊 **Fee + Management Report**\n` +
-      `💼 ${positions.length} positions | Val: ${fmtUsd(totalValueUsd)} | ` +
-      `Unclaimed: ${fmtUsd(totalUnclaimedUsd)} / ${fmtSol(totalUnclaimedSol)}`,
-      reportLines.join("\n"),
-      `───`,
-      `${compoundNote} | Action: ${actionSummary}`,
-    ].join("\n\n");
+      `${header}`,
+      `Positions (${positions.length})`,
+      `${header}`,
+      positionBlocks.join("\n\n"),
+      `${divider}`,
+      `Summary: 💼 ${positions.length} Positions | Val: ${fmtUsd(totalValueUsd)} / ${fmtSol(totalValueSol)} | fees: ${fmtUsd(totalUnclaimedUsd)} / ${fmtSol(totalUnclaimedSol)} | ${actionSummary}`,
+    ].join("\n");
 
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
