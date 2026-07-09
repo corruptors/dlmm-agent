@@ -1,16 +1,4 @@
 import { discoverPools, getPoolDetail, getTopCandidates } from "./screening.js";
-import {
-  getActiveBin,
-  deployPosition,
-  getMyPositions,
-  getWalletPositions,
-  getPositionPnl,
-  claimFees,
-  addLiquidity,
-  rebalancePosition,
-  closePosition,
-  searchPools,
-} from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
@@ -41,6 +29,15 @@ const TIMEFRAME_MINUTES = {
   "12h": 720,
   "24h": 1440,
 };
+
+// Lazy-load dlmm module on first use — avoids ESM initialization-order
+// crash ("addLiquidity is not defined") that occurs with static imports
+// when the module graph has circular dependencies in PM2.
+let _dlmm;
+const D = () => _dlmm || Promise.resolve().then(() => import("./dlmm.js")).then(m => _dlmm = m);
+const dlmm = async (...args) => { if (!_dlmm) await D(); return _dlmm; };
+
+const dlmmTool = (name) => async (...args) => { if (!_dlmm) await D(); return _dlmm[name](...args); };
 
 import { log, logAction } from "../logger.js";
 import { notifyDeploy, notifyClose, notifySwap, notifyRebalance } from "../telegram.js";
@@ -265,12 +262,12 @@ const toolMap = {
   discover_pools: discoverPools,
   get_top_candidates: getTopCandidates,
   get_pool_detail: getPoolDetail,
-  get_position_pnl: getPositionPnl,
-  get_active_bin: getActiveBin,
-  deploy_position: deployPosition,
-  get_my_positions: getMyPositions,
-  get_wallet_positions: getWalletPositions,
-  search_pools: searchPools,
+  get_position_pnl: dlmmTool("getPositionPnl"),
+  get_active_bin: dlmmTool("getActiveBin"),
+  deploy_position: dlmmTool("deployPosition"),
+  get_my_positions: dlmmTool("getMyPositions"),
+  get_wallet_positions: dlmmTool("getWalletPositions"),
+  search_pools: dlmmTool("searchPools"),
   get_token_info: getTokenInfo,
   get_token_holders: getTokenHolders,
   get_token_narrative: getTokenNarrative,
@@ -278,10 +275,10 @@ const toolMap = {
   remove_smart_wallet: removeSmartWallet,
   list_smart_wallets: listSmartWallets,
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
-  claim_fees: claimFees,
-  add_liquidity: addLiquidity,
-  rebalance_position: rebalancePosition,
-  close_position: closePosition,
+  claim_fees: dlmmTool("claimFees"),
+  add_liquidity: dlmmTool("addLiquidity"),
+  rebalance_position: dlmmTool("rebalancePosition"),
+  close_position: dlmmTool("closePosition"),
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,
