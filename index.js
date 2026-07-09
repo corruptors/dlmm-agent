@@ -328,10 +328,11 @@ export async function runManagementCycle({ silent = false } = {}) {
       return a.action !== "STAY";
     });
 
+    // Declare cur early — needed for error messages if anything throws before the if block
+    const cur = config.management.solMode ? "◎" : "$";
+
     if (actionPositions.length > 0) {
       log("cron", `Management: ${actionPositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
-
-      const cur = config.management.solMode ? "◎" : "$";
       const actionBlocks = actionPositions.map((p) => {
         const act = actionMap.get(p.position);
         return [
