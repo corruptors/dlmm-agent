@@ -41,6 +41,7 @@ const TIMEFRAME_MINUTES = {
   "12h": 720,
   "24h": 1440,
 };
+
 import { log, logAction } from "../logger.js";
 import { notifyDeploy, notifyClose, notifySwap, notifyRebalance } from "../telegram.js";
 import { notifyDeploy as dcDeploy, notifyClose as dcClose, notifyRebalance as dcRebalance } from "../discord-notify.js";
