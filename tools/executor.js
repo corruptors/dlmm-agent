@@ -36,8 +36,12 @@ const TIMEFRAME_MINUTES = {
 let _dlmm;
 const D = () => _dlmm || Promise.resolve().then(() => import("./dlmm.js")).then(m => _dlmm = m);
 const dlmm = async (...args) => { if (!_dlmm) await D(); return _dlmm; };
-
-const dlmmTool = (name) => async (...args) => { if (!_dlmm) await D(); return _dlmm[name](...args); };
+const dlmmTool = (name) => async (...args) => {
+  if (!_dlmm) await D();
+  const fn = _dlmm?.[name];
+  if (!fn) throw new Error(`dlmm tool "${name}" not found in lazy module`);
+  return fn(...args);
+};
 
 import { log, logAction } from "../logger.js";
 import { notifyDeploy, notifyClose, notifySwap, notifyRebalance } from "../telegram.js";
@@ -786,7 +790,8 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
-      const positions = await getMyPositions({ force: true });
+      const _dlmmMod = await dlmm();
+      const positions = await _dlmmMod.getMyPositions({ force: true });
       if (positions.total_positions >= config.risk.maxPositions) {
         return {
           pass: false,
