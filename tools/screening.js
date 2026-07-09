@@ -220,9 +220,31 @@ async function applyVolatilityTimeframe(rawPools, sourceTimeframe) {
     pool[`volume_${sourceTimeframe}`] = pool.volume ?? null;
     pool[`volatility_${sourceTimeframe}`] = pool.volatility ?? null;
     pool.volatility_timeframe = volatilityTimeframe;
+    // Also tag 5m volatility if already present in the pool object (from Meteora API)
+    // This lets us compute maxVolatility without extra API calls
+    if (pool.volatility_5m == null && pool['5m'] != null) {
+      pool.volatility_5m = numeric(pool['5m'].volatility);
+    }
+    if (pool.volume_5m == null && pool['5m'] != null) {
+      pool.volume_5m = numeric(pool['5m'].volume);
+    }
   }
 
-  if (sourceTimeframe === volatilityTimeframe) return rawPools;
+  if (sourceTimeframe === volatilityTimeframe) {
+    // No cross-timeframe fetch needed — still compute maxVolatility from available data
+    for (const pool of rawPools) {
+      if (!pool) continue;
+      const vol = numeric(pool.volatility);
+      const vol5m = numeric(pool.volatility_5m);
+      // Use max of primary timeframe and 5m — captures both sustained trend and short spikes
+      pool.maxVolatility = (vol != null && vol5m != null)
+        ? Math.max(vol, vol5m * 0.7)
+        : (vol ?? vol5m ?? null);
+      // Flag pump-and-dump risk: 5m vol > 2.5x primary vol
+      pool.isPumpAndDump = vol != null && vol5m != null && vol5m > vol * 2.5;
+    }
+    return rawPools;
+  }
 
   const uniquePoolAddresses = [...new Set(rawPools.map((pool) => pool?.pool_address).filter(Boolean))];
   const longResults = await Promise.allSettled(
@@ -232,6 +254,7 @@ async function applyVolatilityTimeframe(rawPools, sourceTimeframe) {
           poolAddress,
           volatility: numeric(pool?.volatility),
           volume: numeric(pool?.volume),
+          volatility_5m: numeric(pool?.volatility_5m),
         }))
     )
   );
@@ -253,6 +276,18 @@ async function applyVolatilityTimeframe(rawPools, sourceTimeframe) {
     // Use longer-timeframe values as the canonical ones for filtering
     if (metrics.volatility != null) pool.volatility = metrics.volatility;
     if (metrics.volume != null) pool.volume = metrics.volume;
+
+    // Also capture 5m volatility if returned by the longer-timeframe fetch
+    if (metrics.volatility_5m != null) pool.volatility_5m = metrics.volatility_5m;
+
+    // Compute maxVolatility from both timeframes — use the higher one
+    const vol = numeric(pool.volatility);
+    const vol5m = numeric(pool.volatility_5m);
+    pool.maxVolatility = (vol != null && vol5m != null)
+      ? Math.max(vol, vol5m * 0.7)
+      : (vol ?? vol5m ?? null);
+    // Flag pump-and-dump: 5m volatility > 2.5x the sustained (longer) timeframe vol
+    pool.isPumpAndDump = vol != null && vol5m != null && vol5m > vol * 2.5;
   }
 
   return rawPools;
@@ -538,6 +573,14 @@ export async function discoverPools({
   }
 
   rawPools = await applyVolatilityTimeframe(rawPools, s.timeframe);
+
+  // Use maxVolatility everywhere — prevents narrow bin range from short-term spikes (pump-and-dump)
+  for (const pool of rawPools) {
+    if (pool?.maxVolatility != null) {
+      pool.volatility = pool.maxVolatility;
+    }
+  }
+
   await enrichDiscordSignalLaunchpads(rawPools);
 
   const filteredExamples = [];
@@ -547,6 +590,15 @@ export async function discoverPools({
     filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason });
     if (pool.discord_signal) log("screening", `Discord signal filtered: ${pool.name || pool.pool_address} — ${reason}`);
     return false;
+  }).filter((pool) => {
+    // Reject pump-and-dump candidates — short-term vol spike >> sustained vol
+    // These go OOR within minutes of deploy (febu-SOL pattern)
+    if (pool.isPumpAndDump) {
+      filteredExamples.push({ name: pool.name || pool.pool_address, reason: "pump-and-dump: 5m volatility > 2.5x sustained volatility" });
+      log("screening", `Filtered pump-and-dump ${pool.name} (5m vol >> 1h vol)`);
+      return false;
+    }
+    return true;
   });
 
   const condensed = thresholdedRawPools.map(condensePool);
