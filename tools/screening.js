@@ -20,7 +20,7 @@ const TIMEFRAME_MINUTES = {
   "12h": 720,
   "24h": 1440,
 };
-const PVP_SHORTLIST_LIMIT = 2;
+const PVP_SHORTLIST_LIMIT = 12;
 const PVP_RIVAL_LIMIT = 2;
 const PVP_MIN_ACTIVE_TVL = 5_000;
 const PVP_MIN_HOLDERS = 500;
@@ -370,6 +370,54 @@ async function enrichPvpRisk(pools) {
   }));
 }
 
+/**
+ * Enrich pools with holder concentration data from Jupiter API.
+ * Computes top10_pct and bot_holders_pct from the top 20 holders.
+ * These feed into calculatePvpRisk() for more accurate competition scoring.
+ */
+async function enrichHolderConcentration(pools) {
+  if (pools.length === 0) return;
+
+  await Promise.allSettled(pools.map(async (pool) => {
+    const mint = pool.base?.mint;
+    if (!mint) return;
+
+    try {
+      const { getTokenHolders } = await import("./token.js");
+      const holderData = await getTokenHolders({ mint, limit: 20 });
+
+      // top10_pct: sum of top 10 non-pool holder percentages
+      pool.top10_pct = parseFloat(holderData.top_10_real_holders_pct ?? "0");
+
+      // bot_holders_pct: sum of percentages for holders tagged as bot/contract
+      const botPct = (holderData.holders || [])
+        .filter((h) => {
+          const tags = h.tags || [];
+          return tags.some((t) =>
+            /bot|contract|program|swap|dex|amm|lp|pool|bridge|treasury/i.test(t)
+          );
+        })
+        .reduce((sum, h) => sum + (Number(h.pct) || 0), 0);
+      pool.bot_holders_pct = parseFloat(botPct.toFixed(2));
+
+      // Also pull token security flags if available
+      try {
+        const { getTokenInfo } = await import("./token.js");
+        const info = await getTokenInfo({ query: mint });
+        if (info?.results?.[0]) {
+          const t = info.results[0];
+          pool.token_mint_authority_disabled = t.audit?.mint_disabled ?? null;
+          pool.token_freeze_authority_disabled = t.audit?.freeze_disabled ?? null;
+          pool.token_is_mintable = t.isMintable ?? null;
+          pool.token_is_multisig = t.isMultisig ?? null;
+        }
+      } catch { /* non-critical */ }
+    } catch (err) {
+      log("screening", `Holder enrichment failed for ${pool.base?.symbol}: ${err.message}`);
+    }
+  }));
+}
+
 
 
 /**
@@ -624,9 +672,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         return false;
       }
       return true;
-    })
-    .sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a))
-    .slice(0, limit);
+    });
 
   if (config.screening.avoidPvpSymbols && eligible.length > 0) {
     await enrichPvpRisk(eligible);
@@ -721,8 +767,20 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
+  // ─── Holder Concentration Enrichment ──────────────────────────────
+  // Fetch top-10 and bot holder percentages from Jupiter for accurate PVP scoring.
+  // Runs on all remaining candidates (max ~15 after filtering) — 1 API call per candidate.
+  if (eligible.length > 0) {
+    await enrichHolderConcentration(eligible);
+  }
+
+  // ─── Sort & Rank ─────────────────────────────────────────────────
+  const ranked = [...eligible]
+    .sort((a, b) => scoreCandidateEnhanced(b) - scoreCandidateEnhanced(a))
+    .slice(0, limit);
+
   return {
-    candidates: eligible,
+    candidates: ranked,
     total_screened: pools.length,
     filtered_examples: filteredOut.slice(0, 3),
   };
