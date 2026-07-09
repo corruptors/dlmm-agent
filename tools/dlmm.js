@@ -1604,10 +1604,10 @@ export async function addLiquidity({ position_address, amount_sol }) {
     const txs = await pool.addLiquidityByStrategy({
       positionPubKey: new PublicKey(position_address),
       user: wallet.publicKey,
-      totalXAmount: 0,           // single-sided SOL — no token X
-      totalYAmount: amountLamports,
+      totalXAmount: new BN(0),           // single-sided SOL — no token X
+      totalYAmount: new BN(amountLamports),
       strategy,
-      slippage: 1000,            // 10% slippage in bps
+      slippage: 1000,                    // 10% slippage in bps
     });
 
     const txHashes = [];
