@@ -3,14 +3,14 @@ import { log } from "../logger.js";
 import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { safeNumber } from "../utils/number.js";
 
-const DEFAULT_INTERVALS = ["5_MINUTE", "1H"];
+const DEFAULT_INTERVALS = ["5_MINUTE", "15_MINUTE"];
 const DEFAULT_CANDLES = 298;
 
 function normalizeIntervals(intervals) {
   const list = Array.isArray(intervals) ? intervals : DEFAULT_INTERVALS;
   return list
     .map((value) => String(value || "").trim().toUpperCase())
-    .filter((value) => ["5_MINUTE", "15_MINUTE", "1H", "4H", "1DAY"].includes(value));
+    .filter((value) => value === "5_MINUTE" || value === "15_MINUTE");
 }
 
 function safeNum(value) {
