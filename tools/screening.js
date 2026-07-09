@@ -108,10 +108,10 @@ function getRawPoolScreeningRejectReason(pool, s) {
   const feeActiveTvlRatio = numeric(pool?.fee_active_tvl_ratio);
   const volatility = numeric(pool?.volatility);
   const volume = numeric(pool?.volume);
-  const holders = numeric(pool?.base_token_holders);
+  const holders = numeric(pool?.base_token_holders ?? pool?.holders);
   const mcap = numeric(base?.market_cap);
-  const baseOrganic = numeric(base?.organic_score);
-  const quoteOrganic = numeric(quote?.organic_score);
+  const baseOrganic = numeric(pool?.base_token_organic_score ?? base?.organic_score);
+  const quoteOrganic = numeric(pool?.quote_token_organic_score ?? quote?.organic_score);
   const launchpad = getPoolLaunchpad(pool);
   const createdAt = numeric(base?.created_at);
 
@@ -137,11 +137,13 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (!isUsableVolatility(volatility)) {
     return `volatility ${volatility ?? "unknown"} is unusable`;
   }
-  if (baseOrganic == null || baseOrganic < s.minOrganic) {
-    return `base organic ${baseOrganic ?? "unknown"} below minOrganic ${s.minOrganic}`;
+  // Only reject if organic score is known AND below threshold
+  // If undefined/null (API didn't return it), treat as low-confidence → pass
+  if (baseOrganic != null && baseOrganic < s.minOrganic) {
+    return `base organic ${baseOrganic} below minOrganic ${s.minOrganic}`;
   }
-  if (quoteOrganic == null || quoteOrganic < s.minQuoteOrganic) {
-    return `quote organic ${quoteOrganic ?? "unknown"} below minQuoteOrganic ${s.minQuoteOrganic}`;
+  if (quoteOrganic != null && quoteOrganic < s.minQuoteOrganic) {
+    return `quote organic ${quoteOrganic} below minQuoteOrganic ${s.minQuoteOrganic}`;
   }
   if (
     pool?.discord_signal &&
@@ -176,11 +178,12 @@ async function fetchDiscordSignalCandidates() {
 }
 
 async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category }) {
+  const categoryParam = category ? `&category=${encodeURIComponent(category)}` : "";
   const url = `${POOL_DISCOVERY_BASE}/pools?` +
     `page_size=${page_size}` +
     `&filter_by=${encodeURIComponent(filters)}` +
     `&timeframe=${timeframe}` +
-    `&category=${category}`;
+    categoryParam;
 
   const res = await fetch(url);
 
@@ -418,8 +421,7 @@ export async function discoverPools({
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
     `fee_active_tvl_ratio>=0.03`,  // lenient API filter (tiered check in getRawPoolScreeningRejectReason)
-    `base_token_organic_score>=${s.minOrganic}`,
-    `quote_token_organic_score>=${s.minQuoteOrganic}`,
+    // organic_score filtering done in JavaScript (getRawPoolScreeningRejectReason) — API may return null for this field
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
     s.maxTokenAgeHours != null ? `base_token_created_at>=${Date.now() - s.maxTokenAgeHours * 3_600_000}` : null,
     Array.isArray(s.allowedLaunchpads) && s.allowedLaunchpads.length > 0

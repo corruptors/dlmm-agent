@@ -6,6 +6,8 @@ import {
   getWalletPositions,
   getPositionPnl,
   claimFees,
+  addLiquidity,
+  rebalancePosition,
   closePosition,
   searchPools,
 } from "./dlmm.js";
